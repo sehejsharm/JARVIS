@@ -1,0 +1,27 @@
+{
+  "name": "jarvis-web-app",
+  "version": "1.0.0",
+  "description": "JARVIS - A voice-activated morning briefing PWA for Mr. Sharma",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "icons": "node scripts/generate-icons.js"
+  },
+  "keywords": [
+    "pwa",
+    "jarvis",
+    "briefing",
+    "voice",
+    "assistant"
+  ],
+  "author": "Mr. Sharma",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "rss-parser": "^3.13.0"
+  }
+}
