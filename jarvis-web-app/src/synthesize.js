@@ -75,8 +75,9 @@ async function callAnthropic(apiKey, model, userContent) {
   return json?.content?.[0]?.text?.trim();
 }
 
-async function callOpenAI(apiKey, model, userContent) {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+// Works for any OpenAI-compatible chat API (OpenAI itself and Groq).
+async function callOpenAICompatible(baseUrl, apiKey, model, userContent, label) {
+  const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -94,10 +95,32 @@ async function callOpenAI(apiKey, model, userContent) {
   });
   if (!res.ok) {
     const t = await res.text();
-    throw new Error(`OpenAI ${res.status}: ${t.slice(0, 300)}`);
+    throw new Error(`${label} ${res.status}: ${t.slice(0, 300)}`);
   }
   const json = await res.json();
   return json?.choices?.[0]?.message?.content?.trim();
+}
+
+// Google Gemini — free tier, no credit card required.
+async function callGemini(apiKey, model, userContent) {
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: [{ role: "user", parts: [{ text: userContent }] }],
+      generationConfig: { maxOutputTokens: 700, temperature: 0.8 },
+    }),
+    signal: AbortSignal.timeout(45000),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Gemini ${res.status}: ${t.slice(0, 300)}`);
+  }
+  const json = await res.json();
+  return json?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("").trim();
 }
 
 // Composed locally when no LLM key is configured. Still a clean, speakable briefing.
@@ -135,18 +158,36 @@ function fallbackBriefing(data) {
 export async function synthesize(data) {
   const userContent = `Here is this morning's raw data. Write Mr. Sharma's briefing.\n\n${formatData(data)}`;
 
+  const valid = (v) => v && v.trim() && !v.includes("your_");
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY;
 
   try {
-    if (anthropicKey && anthropicKey.trim() && !anthropicKey.includes("your_")) {
+    // Free providers are checked first so a no-cost key "just works".
+    if (valid(geminiKey)) {
+      const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+      const text = await callGemini(geminiKey.trim(), model, userContent);
+      if (text) return { text, source: `gemini:${model}` };
+    }
+    if (valid(groqKey)) {
+      const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+      const text = await callOpenAICompatible(
+        "https://api.groq.com/openai/v1", groqKey.trim(), model, userContent, "Groq"
+      );
+      if (text) return { text, source: `groq:${model}` };
+    }
+    if (valid(anthropicKey)) {
       const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
       const text = await callAnthropic(anthropicKey.trim(), model, userContent);
       if (text) return { text, source: `anthropic:${model}` };
     }
-    if (openaiKey && openaiKey.trim() && !openaiKey.includes("your_")) {
+    if (valid(openaiKey)) {
       const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-      const text = await callOpenAI(openaiKey.trim(), model, userContent);
+      const text = await callOpenAICompatible(
+        "https://api.openai.com/v1", openaiKey.trim(), model, userContent, "OpenAI"
+      );
       if (text) return { text, source: `openai:${model}` };
     }
   } catch (err) {

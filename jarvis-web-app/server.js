@@ -7,10 +7,7 @@ import cors from "cors";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { getWeather } from "./src/weather.js";
-import { getMarkets } from "./src/markets.js";
-import { getNews } from "./src/news.js";
-import { synthesize } from "./src/synthesize.js";
+import { buildBriefing, llmStatus } from "./src/briefing.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -21,29 +18,8 @@ app.use(express.json());
 
 // --- API: full briefing ---------------------------------------------------
 app.get("/api/briefing", async (req, res) => {
-  const started = Date.now();
   try {
-    // Aggregate all sources in parallel; individual failures degrade gracefully.
-    const [weather, markets, news] = await Promise.all([
-      getWeather(),
-      getMarkets(),
-      getNews(),
-    ]);
-
-    const raw = { weather, markets, news };
-    const { text, source, warning } = await synthesize(raw);
-
-    res.json({
-      ok: true,
-      briefing: text,
-      meta: {
-        synthesizer: source,
-        warning: warning || null,
-        generatedAt: new Date().toISOString(),
-        elapsedMs: Date.now() - started,
-      },
-      data: raw,
-    });
+    res.json(await buildBriefing());
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
@@ -51,20 +27,7 @@ app.get("/api/briefing", async (req, res) => {
 
 // --- Health check ----------------------------------------------------------
 app.get("/api/health", (req, res) => {
-  res.json({
-    ok: true,
-    service: "jarvis",
-    llm: {
-      anthropic: Boolean(
-        process.env.ANTHROPIC_API_KEY &&
-          !process.env.ANTHROPIC_API_KEY.includes("your_")
-      ),
-      openai: Boolean(
-        process.env.OPENAI_API_KEY &&
-          !process.env.OPENAI_API_KEY.includes("your_")
-      ),
-    },
-  });
+  res.json({ ok: true, service: "jarvis", llm: llmStatus() });
 });
 
 // --- Static PWA ------------------------------------------------------------
