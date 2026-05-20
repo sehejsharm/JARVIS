@@ -191,13 +191,15 @@ async function callAnthropic(key, model, content) {
   return j?.content?.[0]?.text?.trim();
 }
 
-function fallbackBriefing(data) {
+function fallbackBriefing(data, keyPresent = false) {
   const w = data.weather, parts = ["Good morning, Mr. Sharma. JARVIS online."];
-  if (w?.ok) parts.push(`In Udaipur it is ${Math.round(w.current.temperature)} degrees and ${w.current.conditions.toLowerCase()}, heading to a high of ${Math.round(w.forecast.high)}.`);
+  if (w?.ok) parts.push(`In ${w.location.split(",")[0]} it is ${Math.round(w.current.temperature)} degrees and ${w.current.conditions.toLowerCase()}, heading to a high of ${Math.round(w.forecast.high)}.`);
   const ok = data.markets.filter((m) => m.ok);
   if (ok.length) parts.push(`On the markets, ${ok.map((m) => `${m.label} ${m.direction} ${Math.abs(m.changePercent)} percent`).join(", ")}.`);
   if (data.news.length) { parts.push("On the wires:"); parts.push(data.news.map((n) => n.title).join("; ") + "."); }
-  parts.push("That is your snapshot. No AI key is configured yet, so this is a direct data readout. Add a GEMINI_API_KEY to unlock the full analytical briefing.");
+  parts.push(keyPresent
+    ? "That is your snapshot. The AI synthesiser is configured but its request was rejected, most likely a rate limit or quota, so this is a direct data readout for now."
+    : "That is your snapshot. No AI key is configured yet, so this is a direct data readout. Add a GEMINI_API_KEY or GROQ_API_KEY to unlock the full analytical briefing.");
   return parts.join(" ");
 }
 
@@ -205,31 +207,41 @@ async function synthesize(data) {
   const content = `Here is this morning's raw data. Write Mr. Sharma's briefing.\n\n${formatData(data)}`;
   const valid = (v) => v && v.trim() && !v.includes("your_");
   const env = process.env;
-  try {
-    if (valid(env.GEMINI_API_KEY)) {
-      const model = env.GEMINI_MODEL || "gemini-2.0-flash";
-      const t = await callGemini(env.GEMINI_API_KEY.trim(), model, content);
-      if (t) return { text: t, source: `gemini:${model}` };
-    }
-    if (valid(env.GROQ_API_KEY)) {
-      const model = env.GROQ_MODEL || "llama-3.3-70b-versatile";
-      const t = await callOpenAICompatible("https://api.groq.com/openai/v1", env.GROQ_API_KEY.trim(), model, content, "Groq");
-      if (t) return { text: t, source: `groq:${model}` };
-    }
-    if (valid(env.ANTHROPIC_API_KEY)) {
-      const model = env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
-      const t = await callAnthropic(env.ANTHROPIC_API_KEY.trim(), model, content);
-      if (t) return { text: t, source: `anthropic:${model}` };
-    }
-    if (valid(env.OPENAI_API_KEY)) {
-      const model = env.OPENAI_MODEL || "gpt-4o-mini";
-      const t = await callOpenAICompatible("https://api.openai.com/v1", env.OPENAI_API_KEY.trim(), model, content, "OpenAI");
-      if (t) return { text: t, source: `openai:${model}` };
-    }
-  } catch (err) {
-    return { text: fallbackBriefing(data), source: "fallback", warning: `LLM call failed (${err.message}).` };
+
+  const providers = [];
+  if (valid(env.GEMINI_API_KEY)) {
+    const model = env.GEMINI_MODEL || "gemini-2.0-flash";
+    providers.push({ source: `gemini:${model}`, run: () => callGemini(env.GEMINI_API_KEY.trim(), model, content) });
   }
-  return { text: fallbackBriefing(data), source: "fallback" };
+  if (valid(env.GROQ_API_KEY)) {
+    const model = env.GROQ_MODEL || "llama-3.3-70b-versatile";
+    providers.push({ source: `groq:${model}`, run: () => callOpenAICompatible("https://api.groq.com/openai/v1", env.GROQ_API_KEY.trim(), model, content, "Groq") });
+  }
+  if (valid(env.ANTHROPIC_API_KEY)) {
+    const model = env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
+    providers.push({ source: `anthropic:${model}`, run: () => callAnthropic(env.ANTHROPIC_API_KEY.trim(), model, content) });
+  }
+  if (valid(env.OPENAI_API_KEY)) {
+    const model = env.OPENAI_MODEL || "gpt-4o-mini";
+    providers.push({ source: `openai:${model}`, run: () => callOpenAICompatible("https://api.openai.com/v1", env.OPENAI_API_KEY.trim(), model, content, "OpenAI") });
+  }
+
+  // Try each configured provider in turn; fall through to the next on failure.
+  const errors = [];
+  for (const p of providers) {
+    try {
+      const t = await p.run();
+      if (t) return { text: t, source: p.source };
+    } catch (err) {
+      errors.push(`${p.source} → ${err.message}`);
+    }
+  }
+
+  return {
+    text: fallbackBriefing(data, providers.length > 0),
+    source: "fallback",
+    warning: errors.length ? `All AI providers failed: ${errors.join(" | ")}` : null,
+  };
 }
 
 /* ─────────────────────────  HANDLER  ───────────────────────── */
