@@ -1,0 +1,7 @@
+{
+  "name": "jarvis",
+  "version": "1.0.0",
+  "description": "JARVIS — voice-activated morning briefing PWA for Mr. Sharma",
+  "type": "module",
+  "private": true
+}
