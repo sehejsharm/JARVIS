@@ -15,19 +15,39 @@ const WEATHER_CODES = {
 };
 const describe = (c) => WEATHER_CODES[c] ?? "Unknown conditions";
 
-async function getWeather() {
+// Free reverse geocoding (no key) to turn coordinates into a city name.
+async function reverseGeocode(lat, lon) {
+  try {
+    const r = await fetch(
+      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    if (!r.ok) return null;
+    const d = await r.json();
+    return [d.city || d.locality, d.principalSubdivision].filter(Boolean).join(", ") || null;
+  } catch { return null; }
+}
+
+async function getWeather(coords) {
+  const useCoords = coords && Number.isFinite(coords.lat) && Number.isFinite(coords.lon);
+  const lat = useCoords ? coords.lat : UDAIPUR.lat;
+  const lon = useCoords ? coords.lon : UDAIPUR.lon;
+  const fallbackName = useCoords ? `${lat.toFixed(2)}, ${lon.toFixed(2)}` : UDAIPUR.name;
   const url =
-    `https://api.open-meteo.com/v1/forecast?latitude=${UDAIPUR.lat}&longitude=${UDAIPUR.lon}` +
+    `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
     `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m` +
     `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max` +
-    `&timezone=Asia%2FKolkata&forecast_days=1`;
+    `&timezone=auto&forecast_days=1`;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
+    const [res, geoName] = await Promise.all([
+      fetch(url, { signal: AbortSignal.timeout(12000) }),
+      useCoords ? reverseGeocode(lat, lon) : Promise.resolve(UDAIPUR.name),
+    ]);
     if (!res.ok) throw new Error(`Open-Meteo ${res.status}`);
     const d = await res.json();
     const c = d.current ?? {}, day = d.daily ?? {};
     return {
-      ok: true, location: UDAIPUR.name,
+      ok: true, location: geoName || fallbackName,
       current: {
         temperature: c.temperature_2m, feelsLike: c.apparent_temperature,
         humidity: c.relative_humidity_2m, windSpeed: c.wind_speed_10m,
@@ -40,7 +60,7 @@ async function getWeather() {
       },
     };
   } catch (err) {
-    return { ok: false, location: UDAIPUR.name, error: err.message };
+    return { ok: false, location: fallbackName, error: err.message };
   }
 }
 
@@ -248,7 +268,14 @@ async function synthesize(data) {
 export default async function handler(req, res) {
   const started = Date.now();
   try {
-    const [weather, markets, news] = await Promise.all([getWeather(), getMarkets(), getNews()]);
+    let coords = null;
+    try {
+      const u = new URL(req.url, "http://localhost");
+      const lat = parseFloat(u.searchParams.get("lat"));
+      const lon = parseFloat(u.searchParams.get("lon"));
+      if (Number.isFinite(lat) && Number.isFinite(lon)) coords = { lat, lon };
+    } catch {}
+    const [weather, markets, news] = await Promise.all([getWeather(coords), getMarkets(), getNews()]);
     const data = { weather, markets, news };
     const { text, source, warning } = await synthesize(data);
     res.setHeader("cache-control", "no-store");

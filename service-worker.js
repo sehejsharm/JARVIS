@@ -1,7 +1,7 @@
 // Minimal service worker: caches the app shell so JARVIS installs and opens
 // instantly. Live data (the briefing API) is always fetched fresh from network.
 
-const CACHE = "jarvis-shell-v1";
+const CACHE = "jarvis-shell-v2";
 const SHELL = [
   "/",
   "/index.html",

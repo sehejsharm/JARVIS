@@ -183,8 +183,13 @@ async function initialize() {
   briefingText.textContent = "Compiling your briefing…";
   metaLine.textContent = "";
 
+  const coords = await getCoords();
+
   try {
-    const res = await fetch("/api/briefing", { cache: "no-store" });
+    const url = coords
+      ? `/api/briefing?lat=${encodeURIComponent(coords.lat)}&lon=${encodeURIComponent(coords.lon)}`
+      : "/api/briefing";
+    const res = await fetch(url, { cache: "no-store" });
     const json = await res.json();
     if (!json.ok) throw new Error(json.error || "Briefing failed");
 
@@ -210,6 +215,19 @@ async function initialize() {
   } finally {
     busy = false;
   }
+}
+
+// Ask the browser for the user's location (falls back to Udaipur if denied).
+function getCoords() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    setStatus("Locating you…");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => resolve(null),
+      { timeout: 8000, maximumAge: 600000 }
+    );
+  });
 }
 
 core.addEventListener("click", initialize);
